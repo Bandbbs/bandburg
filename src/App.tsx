@@ -167,11 +167,13 @@ function App() {
   const [apps, setApps] = useState<App[]>([])
   
   // 文件上传状态
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [installProgress, setInstallProgress] = useState(0)
   const [installMessage, setInstallMessage] = useState('')
   const [resType, setResType] = useState<number>(0) // 资源类型：0=自动检测, 16=表盘, 32=固件, 64=快应用
   const [packageName, setPackageName] = useState<string>('') // 包名（可选）
+  const [isBatchInstalling, setIsBatchInstalling] = useState(false)
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, currentFile: '' })
   
   // 右上角提示状态
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -1190,54 +1192,47 @@ function App() {
       }
     }
 
-    // 安装文件
-    const installFile = async () => {
+    // 安装单个文件（内部函数）
+    const installSingleFile = async (file: File): Promise<boolean> => {
       if (!currentDevice || !wasmClient.client) {
         addLog('请先连接设备', 'warning')
-        return
+        return false
       }
-      
-      if (!selectedFile) {
-        addLog('请选择要安装的文件', 'warning')
-        return
-      }
-      
+
       try {
-        addLog(`开始安装文件: ${selectedFile.name}`, 'info')
+        addLog(`开始安装文件: ${file.name}`, 'info')
         setInstallProgress(0)
-        setInstallMessage('正在准备安装...')
-        
+        setInstallMessage(`正在准备安装 ${file.name}...`)
+
         // 根据用户选择和文件检测确定资源类型和包名
         let finalResType = resType
         let detectedPackageName: string | null = null
-        
+
         // 如果选择自动检测（0），使用JSZip进行文件类型检测
-        if (finalResType === 0 && selectedFile) {
+        if (finalResType === 0) {
           try {
-            addLog('正在检测文件类型...', 'info')
-            const detectionResult = await detectFileTypeAndPackage(selectedFile)
+            addLog(`正在检测文件类型: ${file.name}`, 'info')
+            const detectionResult = await detectFileTypeAndPackage(file)
             finalResType = detectionResult.resType
             detectedPackageName = detectionResult.packageName
             addLog(`文件类型检测完成: 类型=${finalResType}, 包名=${detectedPackageName || '无'}`, 'success')
           } catch (error: any) {
             addLog(`文件类型检测失败: ${error.message}，使用扩展名检测`, 'warning')
             // 检测失败，回退到扩展名检测
-            const fileName = selectedFile.name.toLowerCase()
+            const fileName = file.name.toLowerCase()
             if (fileName.endsWith('.rpk')) {
               finalResType = 64 // 快应用
               addLog('扩展名检测到.rpk快应用文件', 'info')
             } else if (fileName.endsWith('.bin')) {
-              // .bin可能是表盘或固件，暂时按表盘处理
               finalResType = 16 // 表盘文件
               addLog('扩展名检测到.bin文件，暂时按表盘处理', 'info')
             } else {
-              // 未知文件类型，默认按表盘处理
               finalResType = 16
               addLog('未知文件类型，默认按表盘处理', 'warning')
             }
           }
         }
-        
+
         // 准备包名参数：优先使用检测到的包名，如果没有则使用用户输入的包名
         let finalPackageName: string | null = null
         if (detectedPackageName) {
@@ -1250,20 +1245,20 @@ function App() {
           finalPackageName = null
           addLog('未指定包名', 'info')
         }
-        
+
         addLog(`安装参数：类型=${finalResType}${finalPackageName ? `, 包名=${finalPackageName}` : ''}`, 'info')
-        
+
         // 确保UI更新进度条显示
         setInstallProgress(1)
-        setInstallMessage('正在开始安装...')
-        
+        setInstallMessage(`正在安装 ${file.name}...`)
+
         // 使用setTimeout确保UI有机会更新进度条
         await new Promise(resolve => setTimeout(resolve, 50))
-        
+
         // 调用WASM安装文件
         const result = await wasmClient.client.installFile(
           currentDevice.addr,
-          selectedFile,
+          file,
           finalResType,
           finalPackageName,
           (progressData: any) => {
@@ -1271,23 +1266,67 @@ function App() {
             if (typeof progressData === 'number') {
               const percent = Math.round(progressData * 100)
               setInstallProgress(percent)
-              setInstallMessage(`安装进度: ${percent}%`)
+              setInstallMessage(`安装 ${file.name}: ${percent}%`)
             } else if (progressData && typeof progressData === 'object') {
               const percent = progressData.progress ? Math.round(progressData.progress * 100) : 0
               setInstallProgress(percent)
-              setInstallMessage(progressData.message || `安装进度: ${percent}%`)
+              setInstallMessage(progressData.message || `安装 ${file.name}: ${percent}%`)
             }
           }
         )
-        
+
         setInstallProgress(100)
-        setInstallMessage('安装完成')
-        addLog(`文件安装成功: ${selectedFile.name}`, 'success')
-        setSelectedFile(null)
+        addLog(`文件安装成功: ${file.name}`, 'success')
+        return true
       } catch (error: any) {
-        addLog(`文件安装失败: ${error.message}`, 'error')
+        addLog(`文件安装失败: ${file.name} - ${error.message}`, 'error')
         setInstallMessage(`安装失败: ${error.message}`)
+        return false
       }
+    }
+
+    // 安装文件（支持批量）
+    const installFiles = async () => {
+      if (!currentDevice || !wasmClient.client) {
+        addLog('请先连接设备', 'warning')
+        return
+      }
+
+      if (selectedFiles.length === 0) {
+        addLog('请选择要安装的文件', 'warning')
+        return
+      }
+
+      const totalFiles = selectedFiles.length
+      addLog(`开始批量安装 ${totalFiles} 个文件...`, 'info')
+
+      let successCount = 0
+      let failCount = 0
+
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i]
+        addLog(`[${i + 1}/${totalFiles}] 处理文件: ${file.name}`, 'info')
+        setInstallMessage(`正在处理第 ${i + 1}/${totalFiles} 个文件: ${file.name}`)
+
+        const success = await installSingleFile(file)
+        if (success) {
+          successCount++
+        } else {
+          failCount++
+        }
+
+        // 文件间短暂延迟
+        if (i < selectedFiles.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300))
+        }
+      }
+
+      // 安装完成，清空文件列表
+      setSelectedFiles([])
+      setInstallProgress(100)
+      setInstallMessage(`安装完成: 成功 ${successCount} 个, 失败 ${failCount} 个`)
+      addLog(`批量安装完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+        failCount === 0 ? 'success' : 'warning')
     }
 
     // 添加日志
@@ -1376,48 +1415,32 @@ function App() {
     handleUrlDownload()
   }, [])
   
-  // 处理文件选择
+  // 处理文件选择（支持多选）
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (file) {
-      setSelectedFile(file)
-      addLog(`已选择文件: ${file.name}`, 'info')
-      
-      // 自动检测文件类型和包名
-      const detectFile = async () => {
-        try {
-          addLog('正在自动检测文件类型...', 'info')
-          const detectionResult = await detectFileTypeAndPackage(file)
-          
-          // 更新资源类型和包名状态
-          setResType(detectionResult.resType)
-          if (detectionResult.packageName) {
-            setPackageName(detectionResult.packageName)
-            addLog(`自动检测到包名: ${detectionResult.packageName}`, 'success')
-          } else {
-            // 清空包名，让用户可以手动输入
-            setPackageName('')
-            addLog('文件类型检测完成，未检测到包名', 'info')
-          }
-          
-          addLog(`文件类型检测完成: 类型=${detectionResult.resType} (${detectionResult.resType === 16 ? '表盘' : detectionResult.resType === 32 ? '固件' : detectionResult.resType === 64 ? '快应用' : '未知'})`, 'success')
-        } catch (error: any) {
-          console.error('文件类型自动检测失败:', error)
-          addLog(`文件类型自动检测失败: ${error.message}`, 'warning')
-          // 检测失败时，根据扩展名设置默认类型
-          const fileName = file.name.toLowerCase()
-          if (fileName.endsWith('.rpk')) {
-            setResType(64)
-            addLog('根据扩展名设置为快应用类型', 'info')
-          } else if (fileName.endsWith('.bin')) {
-            setResType(16)
-            addLog('根据扩展名设置为表盘类型', 'info')
-          }
-        }
-      }
-      
-      detectFile()
+    const files = event.target.files
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files)
+      setSelectedFiles(prev => [...prev, ...fileArray])
+      addLog(`已添加 ${fileArray.length} 个文件`, 'info')
+      fileArray.forEach(file => {
+        addLog(`  - ${file.name} (${(file.size / 1024).toFixed(2)} KB)`, 'info')
+      })
+      // 清空input以便可以再次选择相同文件
+      event.target.value = ''
     }
+  }
+
+  // 移除单个文件
+  const removeFile = (index: number) => {
+    const file = selectedFiles[index]
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+    addLog(`已移除文件: ${file.name}`, 'info')
+  }
+
+  // 清空所有文件
+  const clearAllFiles = () => {
+    setSelectedFiles([])
+    addLog('已清空所有待安装文件', 'info')
   }
   
   // 快速连接
@@ -1805,30 +1828,43 @@ function App() {
                     >
                       选择文件
                     </button>
-                    <input 
-                      type="file" 
-                      id="fileInput" 
-                      className="hidden" 
+                    <input
+                      type="file"
+                      id="fileInput"
+                      className="hidden"
                       accept=".bin,.rpk"
+                      multiple
                       onChange={handleFileSelect}
                     />
-                    <p className="text-sm text-gray-500 mt-2 text-center">支持的文件类型：.bin (表盘/固件), .rpk (快应用)</p>
+                    <p className="text-sm text-gray-500 mt-2 text-center">支持的文件类型：.bin (表盘/固件), .rpk (快应用) - 可多选</p>
                   </div>
 
-                  {selectedFile && (
-                    <div className=" margin-bottom-lg">
-                      <div className="flex-between">
-                        <div>
-                          <p className="font-bold">{selectedFile.name}</p>
-                          <p className="text-sm text-gray-500">大小: {(selectedFile.size / 1024).toFixed(2)} KB</p>
-                          <p className="text-sm text-gray-500">类型: {selectedFile.type || '未知'}</p>
-                        </div>
-                        <button 
-                          onClick={() => setSelectedFile(null)}
-                          className="text-lg font-bold cursor-pointer hover:opacity-70"
+                  {selectedFiles.length > 0 && (
+                    <div className="margin-bottom-lg">
+                      <div className="flex-between mb-2">
+                        <span className="font-bold">已选择 {selectedFiles.length} 个文件</span>
+                        <button
+                          onClick={clearAllFiles}
+                          className="text-sm cursor-pointer hover:opacity-70"
                         >
-                          ×
+                          清空全部
                         </button>
+                      </div>
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {selectedFiles.map((file, index) => (
+                          <div key={index} className="flex-between bg-gray-50 p-2 rounded">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold truncate">{file.name}</p>
+                              <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(2)} KB</p>
+                            </div>
+                            <button
+                              onClick={() => removeFile(index)}
+                              className="text-lg font-bold cursor-pointer hover:opacity-70 ml-2"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -1839,7 +1875,7 @@ function App() {
                       <h3 className="dropdown-title">安装类型</h3>
                     </div>
                     <div className="mt-4">
-                      <select 
+                      <select
                         value={resType}
                         onChange={(e) => setResType(Number(e.target.value))}
                         className="w-full  p-3 bg-white text-black"
@@ -1859,7 +1895,7 @@ function App() {
                         <span className="font-bold">{installProgress}%</span>
                       </div>
                       <div className="w-full h-2 bg-gray-200">
-                        <div 
+                        <div
                           className="h-full bg-black transition-all duration-300"
                           style={{ width: `${installProgress}%` }}
                         ></div>
@@ -1868,12 +1904,12 @@ function App() {
                     </div>
                   )}
 
-                  <button 
-                    onClick={installFile}
-                    disabled={!selectedFile || !currentDevice}
+                  <button
+                    onClick={installFiles}
+                    disabled={selectedFiles.length === 0 || !currentDevice}
                     className="w-full disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    开始安装
+                    开始安装 ({selectedFiles.length} 个文件)
                   </button>
                 </div>
               )}
