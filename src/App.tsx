@@ -2202,7 +2202,18 @@ function App() {
                     <div>
                       <div className="flex justify-between items-center margin-bottom-lg">
                         <button
-                          onClick={() => setEditingScript(null)}
+                          onClick={() => {
+                            // 清理全局 GUI
+                            if ((window as any).bandburgActiveGUI) {
+                              try {
+                                (window as any).bandburgActiveGUI.close()
+                              } catch (e) {
+                                // 忽略关闭错误
+                              }
+                              (window as any).bandburgActiveGUI = null
+                            }
+                            setEditingScript(null)
+                          }}
                           className="bg-white text-black px-3 py-2 font-bold cursor-pointer"
                         >
                           ← 返回列表
@@ -2369,16 +2380,16 @@ function App() {
                                 
                                 // GUI创建功能
                                 gui: (config) => {
-                                  // 关闭同一 script 之前创建的 GUI（实现动态更新）
-                                  if (sandbox.activeGUI) {
+                                  // 关闭之前创建的 GUI（使用全局存储）
+                                  if ((window as any).bandburgActiveGUI) {
                                     try {
-                                      sandbox.activeGUI.close()
+                                      (window as any).bandburgActiveGUI.close()
                                     } catch (e) {
                                       // 忽略关闭错误
                                     }
-                                    sandbox.activeGUI = null
+                                    (window as any).bandburgActiveGUI = null
                                   }
-                                  
+
                                   // 创建GUI容器
                                   const overlayContainer = document.createElement('div')
                                   overlayContainer.className = 'fixed inset-0 z-30 overlay-container'
@@ -2539,13 +2550,36 @@ function App() {
                                           box-sizing: border-box;
                                         `
                                         
-                                        fileInput.addEventListener('change', (e) => {
+                                        fileInput.addEventListener('change', async (e) => {
                                           const file = e.target.files?.[0]
-                                          values[elementId] = file
-                                          // 触发事件
-                                          const listeners = eventListeners['file:change'][elementId]
-                                          if (listeners) {
-                                            listeners.forEach(callback => callback(file))
+                                          if (file) {
+                                            // 读取文件内容为 Base64
+                                            const reader = new FileReader()
+                                            reader.onload = (event) => {
+                                              const arrayBuffer = event.target?.result as ArrayBuffer
+                                              const bytes = new Uint8Array(arrayBuffer)
+                                              // 转换为 Base64
+                                              let binary = ''
+                                              for (let i = 0; i < bytes.length; i++) {
+                                                binary += String.fromCharCode(bytes[i])
+                                              }
+                                              const base64Data = btoa(binary)
+
+                                              // 存储文件信息
+                                              values[elementId] = {
+                                                name: file.name,
+                                                type: file.type,
+                                                size: file.size,
+                                                data: base64Data
+                                              }
+
+                                              // 触发事件
+                                              const listeners = eventListeners['file:change']?.[elementId]
+                                              if (listeners) {
+                                                listeners.forEach(callback => callback(values[elementId]))
+                                              }
+                                            }
+                                            reader.readAsArrayBuffer(file)
                                           }
                                         })
                                         
@@ -2696,6 +2730,9 @@ function App() {
                                       if (sandbox.activeGUI === guiController) {
                                         sandbox.activeGUI = null
                                       }
+                                      if ((window as any).bandburgActiveGUI === guiController) {
+                                        (window as any).bandburgActiveGUI = null
+                                      }
                                     },
                                     
                                     // 显示GUI（默认已显示）
@@ -2708,10 +2745,11 @@ function App() {
                                       overlayContainer.style.display = 'none'
                                     }
                                   }
-                                  
-                                  // 存储到 sandbox，供下次调用时关闭（实现动态更新）
+
+                                  // 存储到 sandbox 和全局变量，供下次调用时关闭
                                   sandbox.activeGUI = guiController
-                                  
+                                  ;(window as any).bandburgActiveGUI = guiController
+
                                   return guiController
                                 }
                               }

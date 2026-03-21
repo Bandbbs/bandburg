@@ -46,3 +46,6 @@ yarn-error.log*
 *.njsproj
 *.sln
 *.sw?
+
+# 脚本目录
+scripts/
