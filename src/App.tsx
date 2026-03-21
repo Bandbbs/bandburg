@@ -135,6 +135,7 @@ function App() {
     }
   })
   const [selectedScriptId, setSelectedScriptId] = useState<string>('')
+  const [editingScript, setEditingScript] = useState<ScriptProgram | null>(null)
   
   // Script市场相关状态
   const [showScriptMarket, setShowScriptMarket] = useState(false)
@@ -2130,178 +2131,118 @@ function App() {
                 )}
                 
                 <div style={{ display: showScriptMarket ? 'none' : 'block' }}>
-                  <h3 className="text-xl font-bold mb-3">脚本编辑器</h3>
-                  
-                  {/* 程序管理工具栏 */}
-                  <div className=" margin-bottom-lg">
-                    <div className="flex flex-wrap items-center gap-3 margin-bottom-lg">
-                      <div className="flex-1 min-w-[200px]">
-                        <div className="text-sm font-bold mb-1">程序管理</div>
-                        <div className="flex items-center gap-2">
-                          <select 
-                            className="flex-1  p-2 bg-white text-black"
-                            value={selectedScriptId}
-                            onChange={(e) => {
-                              const scriptId = e.target.value
-                              setSelectedScriptId(scriptId)
-                              if (scriptId) {
-                                const script = savedScripts.find(s => s.id === scriptId)
-                                if (script) {
-                                  const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
-                                  editor.value = script.code
-                                }
-                              } else {
-                                const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
-                                editor.value = ''
-                              }
-                            }}
-                          >
-                            <option value="">-- 选择程序 --</option>
-                            {savedScripts.map(script => (
-                              <option key={script.id} value={script.id}>
-                                {script.name} {script.description ? `(${script.description})` : ''}
-                              </option>
-                            ))}
-                          </select>
-                          
-                          <button 
+                  {/* 程序列表视图 - 没有选中程序时显示 */}
+                  {!editingScript ? (
+                    <div>
+                      <div className="flex justify-between items-center margin-bottom-lg">
+                        <h3 className="text-xl font-bold">已安装的程序</h3>
+                        <button
+                          onClick={() => {
+                            const newScript: ScriptProgram = {
+                              id: Date.now().toString(),
+                              name: '新程序',
+                              code: '// 在这里编写 JavaScript 代码\n',
+                              createdAt: Date.now(),
+                              updatedAt: Date.now()
+                            }
+                            setEditingScript(newScript)
+                          }}
+                          className="bg-white text-black px-4 py-2 font-bold cursor-pointer"
+                        >
+                          + 新建程序
+                        </button>
+                      </div>
+
+                      {savedScripts.length === 0 ? (
+                        <div className="text-center py-12 bg-gray-50 rounded-lg">
+                          <p className="text-gray-500 mb-4">还没有保存任何程序</p>
+                          <button
                             onClick={() => {
-                              const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
-                              const code = editor.value.trim()
-                              if (!code) {
-                                setLogs(prev => [...prev, '❌ 代码不能为空'])
-                                return
-                              }
-                              
-                              const name = prompt('请输入程序名称:', '未命名脚本')
-                              if (!name) return
-                              
-                              const description = prompt('请输入程序描述（可选）:', '')
-                              
                               const newScript: ScriptProgram = {
                                 id: Date.now().toString(),
-                                name,
-                                code,
-                                description: description || undefined,
+                                name: '新程序',
+                                code: '// 在这里编写 JavaScript 代码\n',
                                 createdAt: Date.now(),
                                 updatedAt: Date.now()
                               }
-                              
-                              const updatedScripts = [...savedScripts, newScript]
-                              setSavedScripts(updatedScripts)
-                              setSelectedScriptId(newScript.id)
-                              
-                              // 保存到localStorage
-                              localStorage.setItem('bandburg_saved_scripts', JSON.stringify(updatedScripts))
-                              
-                              setLogs(prev => [...prev, `✅ 程序 "${name}" 已保存`])
+                              setEditingScript(newScript)
                             }}
-                            className=" bg-white text-black px-3 py-2 cursor-pointer   icon-font"
+                            className="bg-white text-black px-4 py-2 font-bold cursor-pointer"
                           >
-                            󰀕
+                            创建第一个程序
                           </button>
-                          
-                          <button 
-                            onClick={() => {
-                              if (!selectedScriptId) {
-                                setLogs(prev => [...prev, '❌ 请先选择要删除的程序'])
-                                return
-                              }
-                              
-                              if (confirm('确定要删除此程序吗？')) {
-                                const updatedScripts = savedScripts.filter(s => s.id !== selectedScriptId)
-                                setSavedScripts(updatedScripts)
-                                setSelectedScriptId('')
-                                
-                                // 保存到localStorage
-                                localStorage.setItem('bandburg_saved_scripts', JSON.stringify(updatedScripts))
-                                
-                                const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
-                                editor.value = ''
-                                
-                                setLogs(prev => [...prev, '✅ 程序已删除'])
-                              }
-                            }}
-                            className=" bg-white text-black px-3 py-2 cursor-pointer   icon-font"
-                            disabled={!selectedScriptId}
-                          >
-                            󰀗
-                          </button>
-                          
-                          <button 
-                            onClick={() => {
-                              // 创建隐藏的文件输入
-                              const input = document.createElement('input')
-                              input.type = 'file'
-                              input.accept = '.js,.txt'
-                              input.style.display = 'none'
-                              
-                              input.onchange = (e) => {
-                                const file = (e.target as HTMLInputElement).files?.[0]
-                                if (!file) return
-                                
-                                const reader = new FileReader()
-                                reader.onload = (event) => {
-                                  const code = event.target?.result as string
-                                  const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
-                                  editor.value = code
-                                  
-                                  setLogs(prev => [...prev, `✅ 已导入文件: ${file.name}`])
-                                }
-                                reader.readAsText(file)
-                              }
-                              
-                              document.body.appendChild(input)
-                              input.click()
-                              document.body.removeChild(input)
-                            }}
-                            className=" bg-white text-black px-3 py-2 cursor-pointer   icon-font"
-                          >
-                            󰁮
-                          </button>
-                          
-                          <button 
-                            onClick={() => {
-                              const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
-                              editor.value = ''
-                              setSelectedScriptId('')
-                            }}
-                            className=" bg-white text-black px-3 py-2 cursor-pointer   icon-font"
-                          >
-                            󰁿
-                          </button>
-
                         </div>
-                      </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {savedScripts.map(script => (
+                            <div
+                              key={script.id}
+                              className="info-bar cursor-pointer hover:opacity-80 transition-opacity"
+                              onClick={() => setEditingScript(script)}
+                            >
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                  <h4 className="font-bold text-lg">{script.name}</h4>
+                                  {script.description && (
+                                    <p className="text-sm text-gray-500 mt-1">{script.description}</p>
+                                  )}
+                                  <p className="text-xs text-gray-400 mt-2">
+                                    更新于 {new Date(script.updatedAt).toLocaleString()}
+                                  </p>
+                                </div>
+                                <span className="text-gray-400 text-xl">→</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  
-                  <div className=" margin-bottom-lg">
-                    <div className="flex-between margin-bottom-lg">
-                      <div>
-                        <h4 className="font-bold">JavaScript 代码</h4>
-                        <p className="text-sm text-gray-500">支持使用 WASM 接口与设备交互</p>
+                  ) : (
+                    /* 编辑器视图 - 选中程序时显示 */
+                    <div>
+                      <div className="flex justify-between items-center margin-bottom-lg">
+                        <button
+                          onClick={() => setEditingScript(null)}
+                          className="bg-white text-black px-3 py-2 font-bold cursor-pointer"
+                        >
+                          ← 返回列表
+                        </button>
+                        <input
+                          type="text"
+                          value={editingScript.name}
+                          onChange={(e) => setEditingScript({...editingScript, name: e.target.value})}
+                          className="p-2 bg-white text-black w-40 text-right font-bold"
+                          placeholder="程序名称"
+                        />
                       </div>
-                      <div className="flex space-x-2">
-                        <button 
-                          onClick={() => {
-                            // 执行脚本
-                            try {
-                              const script = document.getElementById('scriptEditor') as HTMLTextAreaElement
-                              const code = script.value
-                              
-                              // 创建安全的执行环境
-                              const sandbox = {
-                                // 暴露的 WASM 接口
-                                wasm: {
-                                  // 设备连接相关
-                                  miwear_connect: async (name: string, addr: string, authkey: string, sar_version: number, connect_type: string) => {
-                                    if (!window.wasmClient?.wasmModule?.miwear_connect) {
-                                      throw new Error('WASM模块未初始化或miwear_connect函数不可用')
-                                    }
-                                    return await window.wasmClient.wasmModule.miwear_connect(name, addr, authkey, sar_version, connect_type)
-                                  },
-                                  miwear_disconnect: async (addr: string) => {
+
+                      <div className=" margin-bottom-lg">
+                        <div className="flex-between margin-bottom-lg">
+                          <div>
+                            <h4 className="font-bold">JavaScript 代码</h4>
+                            <p className="text-sm text-gray-500">支持使用 WASM 接口与设备交互</p>
+                          </div>
+                          <div className="flex space-x-2">
+                            <button
+                              className="bg-black text-white px-4 py-2 font-bold cursor-pointer"
+                              onClick={() => {
+                                // 执行脚本
+                                try {
+                                  const script = document.getElementById('scriptEditor') as HTMLTextAreaElement
+                                  const code = script.value
+
+                                  // 创建安全的执行环境
+                                  const sandbox = {
+                                    // 暴露的 WASM 接口
+                                    wasm: {
+                                      // 设备连接相关
+                                      miwear_connect: async (name: string, addr: string, authkey: string, sar_version: number, connect_type: string) => {
+                                        if (!window.wasmClient?.wasmModule?.miwear_connect) {
+                                          throw new Error('WASM模块未初始化或miwear_connect函数不可用')
+                                        }
+                                        return await window.wasmClient.wasmModule.miwear_connect(name, addr, authkey, sar_version, connect_type)
+                                      },
+                                      miwear_disconnect: async (addr: string) => {
                                     if (!window.wasmClient?.wasmModule?.miwear_disconnect) {
                                       throw new Error('WASM模块未初始化或miwear_disconnect函数不可用')
                                     }
@@ -2799,56 +2740,105 @@ function App() {
                         >
                           执行脚本
                         </button>
-                        <button 
+                        <button
+                          onClick={() => {
+                            if (!editingScript) return
+                            const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
+                            const code = editor.value
+                            const existingIndex = savedScripts.findIndex(s => s.id === editingScript.id)
+                            let updatedScripts: ScriptProgram[]
+                            if (existingIndex >= 0) {
+                              updatedScripts = [...savedScripts]
+                              updatedScripts[existingIndex] = {...editingScript, code, updatedAt: Date.now()}
+                            } else {
+                              updatedScripts = [...savedScripts, {...editingScript, code, updatedAt: Date.now()}]
+                            }
+                            setSavedScripts(updatedScripts)
+                            localStorage.setItem('bandburg_saved_scripts', JSON.stringify(updatedScripts))
+                            setLogs(prev => [...prev, `✅ 程序 "${editingScript.name}" 已保存`])
+                          }}
+                          className="bg-white text-black px-4 py-2 font-bold cursor-pointer"
+                        >
+                          保存
+                        </button>
+                        <button
+                          onClick={() => {
+                            const input = document.createElement('input')
+                            input.type = 'file'
+                            input.accept = '.js,.txt'
+                            input.onchange = (e) => {
+                              const file = (e.target as HTMLInputElement).files?.[0]
+                              if (!file) return
+                              const reader = new FileReader()
+                              reader.onload = (event) => {
+                                const code = event.target?.result as string
+                                const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
+                                editor.value = code
+                                setLogs(prev => [...prev, `✅ 已导入文件: ${file.name}`])
+                              }
+                              reader.readAsText(file)
+                            }
+                            input.click()
+                          }}
+                          className="bg-white text-black px-4 py-2 font-bold cursor-pointer"
+                        >
+                          导入
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!editingScript) return
+                            const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
+                            const code = editor.value
+                            const blob = new Blob([code], { type: 'text/javascript' })
+                            const url = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = url
+                            a.download = `${editingScript.name}.js`
+                            a.click()
+                            URL.revokeObjectURL(url)
+                            setLogs(prev => [...prev, `✅ 已导出: ${editingScript.name}.js`])
+                          }}
+                          className="bg-white text-black px-4 py-2 font-bold cursor-pointer"
+                        >
+                          导出
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!editingScript) return
+                            if (savedScripts.find(s => s.id === editingScript.id) && !confirm('确定要删除此程序吗？')) return
+                            const updatedScripts = savedScripts.filter(s => s.id !== editingScript.id)
+                            setSavedScripts(updatedScripts)
+                            localStorage.setItem('bandburg_saved_scripts', JSON.stringify(updatedScripts))
+                            setEditingScript(null)
+                            setLogs(prev => [...prev, '✅ 程序已删除'])
+                          }}
+                          className="bg-white text-black px-4 py-2 font-bold cursor-pointer hover:bg-red-100"
+                        >
+                          删除
+                        </button>
+                        <button
                           onClick={() => {
                             const editor = document.getElementById('scriptEditor') as HTMLTextAreaElement
                             editor.value = ''
                           }}
-                          className=" bg-white text-black px-4 py-2 font-bold cursor-pointer  "
+                          className="bg-white text-black px-4 py-2 font-bold cursor-pointer"
                         >
                           清空
                         </button>
                       </div>
                     </div>
-                    
-                    <textarea 
+
+                    <textarea
                       id="scriptEditor"
-                      className="w-full h-64  font-mono text-sm bg-white text-black"
+                      className="w-full h-64 font-mono text-sm bg-white text-black"
                       placeholder="// 在这里编写 JavaScript 代码
 // 可以使用 sandbox.wasm.* 访问 WASM 接口
 // 例如：sandbox.wasm.thirdpartyapp_send_message('设备地址', '包名', '消息内容')"
-                      defaultValue={`// 示例脚本：发送消息到第三方应用
-// 需要先连接设备，然后执行此脚本
-
-async function sendMessageToApp() {
-  const log = sandbox.log
-  const wasm = sandbox.wasm
-  
-  // 检查是否有连接设备
-  if (!sandbox.currentDevice) {
-    log('❌ 没有连接设备，请先连接设备')
-    return
-  }
-  
-  const deviceAddr = sandbox.currentDevice.addr
-  const packageName = 'com.example.app' // 替换为实际包名
-  const message = 'Hello from BandBurg Script!'
-  
-  log(\`📤 准备发送消息到应用 \${packageName}\`)
-  
-  try {
-    // 发送消息
-    await wasm.thirdpartyapp_send_message(deviceAddr, packageName, message)
-    log(\`✅ 消息发送成功: "\${message}"\`)
-  } catch (error) {
-    log(\`❌ 消息发送失败: \${error}\`)
-  }
-}
-
-// 执行函数
-sendMessageToApp()`}
+                      defaultValue={editingScript?.code || ''}
                     ></textarea>
                   </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
